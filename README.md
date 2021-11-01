@@ -1,2 +1,2 @@
 # GeneralizedMixtureModel
-Mixture Model with any distributions via Pytorch distribution
+Mixture Model with any distributions via torch distributions
