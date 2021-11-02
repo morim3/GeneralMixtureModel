@@ -5,14 +5,16 @@ from torch import nn, distributions
 
 
 class ModuledDistribution(nn.Module):
-    def __init__(self, distribution: Type, init_parameters: Dict):
+    def __init__(self, distribution: distributions.Distribution, init_parameters: Dict):
         super().__init__()
         self.distribution = distribution
         self.parameter = nn.ParameterDict(init_parameters)
 
     def log_prob(self, data):
-        return self.distribution(**self.parameter).log_prob(data)
+        eps = 1e-8
+        return self.distribution.log_prob(data) + eps
 
     def sample(self, sample_shape=torch.Size()):
-        return self.distribution(**self.parameter).sample(sample_shape)
+        return self.distribution.sample(sample_shape)
+
 

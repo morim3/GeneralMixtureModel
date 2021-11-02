@@ -13,7 +13,7 @@ class GeneralizedMixtureModel(nn.Module):
                  rtol=1e-8,
                  random_state=123,
                  init_cluster_ratio=None,
-                 maximization_step=30,
+                 maximization_step=100,
                  learning_rate=0.001):
 
         super().__init__()
@@ -65,13 +65,18 @@ class GeneralizedMixtureModel(nn.Module):
             return posterior / posterior.sum(dim=0)
 
     def maximization(self, data, posterior):
+        eps = 1e-7
         self.cluster_ratio = posterior.mean(dim=1)
 
         for _step in range(self.maximization_step):
             self.optimizer.zero_grad()
             log_prob = torch.stack([dist.log_prob(data) for dist in self.distributions])
-            minus_lower_bound = - ((log_prob + self.cluster_ratio.log().unsqueeze(-1)) * posterior).mean()
+            minus_lower_bound = - ((log_prob + (self.cluster_ratio+eps).log().unsqueeze(-1)) * posterior).mean()
+
             loss = minus_lower_bound  # TODO: prior loss
+            if torch.isnan(loss):
+                raise NotImplementedError
+
             loss.backward()
             self.optimizer.step()
 
