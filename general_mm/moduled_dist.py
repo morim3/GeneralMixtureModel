@@ -11,7 +11,7 @@ class ModuledDistribution(nn.Module):
         self.parameter = nn.ParameterDict(init_parameters)
 
     def log_prob(self, data):
-        eps = 1e-8
+        eps = 1e-5
         return self.distribution.log_prob(data) + eps
 
     def sample(self, sample_shape=torch.Size()):

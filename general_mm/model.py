@@ -4,6 +4,9 @@ import torch
 from torch import nn, optim
 from torch.distributions import Distribution
 from tqdm import tqdm
+import numpy as np
+from scipy.special import digamma
+from sklearn.cluster import KMeans
 
 
 class GeneralizedMixtureModel(nn.Module):
@@ -14,7 +17,7 @@ class GeneralizedMixtureModel(nn.Module):
                  random_state=123,
                  init_cluster_ratio=None,
                  maximization_step=100,
-                 learning_rate=0.001):
+                 learning_rate=0.1):
 
         super().__init__()
 
@@ -71,7 +74,7 @@ class GeneralizedMixtureModel(nn.Module):
         for _step in range(self.maximization_step):
             self.optimizer.zero_grad()
             log_prob = torch.stack([dist.log_prob(data) for dist in self.distributions])
-            minus_lower_bound = - ((log_prob + (self.cluster_ratio+eps).log().unsqueeze(-1)) * posterior).mean()
+            minus_lower_bound = - ((log_prob + self.cluster_ratio.log().unsqueeze(-1)) * posterior).mean()
 
             loss = minus_lower_bound  # TODO: prior loss
             if torch.isnan(loss):
@@ -83,3 +86,83 @@ class GeneralizedMixtureModel(nn.Module):
     def sample(self, n_sample):
         class_sample = torch.multinomial(self.cluster_ratio, n_sample, replacement=True)
         return class_sample, torch.stack([self.distributions[i].sample() for i in class_sample])
+
+
+class VariationalGaussianMixture:
+    def __init__(self, cluster_num: int, dim: int, init_params):
+
+        self.cluster_num = cluster_num
+        self.dim = dim
+
+        self.prior_dirichlet = init_params.prior_dirichlet
+        self.prior_loc_mu = init_params.prior_loc_mu
+        self.prior_beta = init_params.prior_beta
+        self.prior_cov_mu = init_params.prior_cov_mu
+        self.prior_cov_shape = init_params.prior_cov_shape
+
+
+
+    def _maximize(self, data, rho):
+        """
+
+        :param data: (batch_size n, dim m) numpy array
+        :return:
+        """
+        # maximization
+        N_k = rho.sum(axis=0) + 1e-7
+        estimated_mu = np.sum(data[:, np.newaxis, :] * rho[:, :, np.newaxis], axis=0) / N_k[:, np.newaxis]
+        variation = data[:, np.newaxis] - estimated_mu[np.newaxis, :]
+        estimated_cov = np.sum(rho[:, :, np.newaxis, np.newaxis] *
+                                variation[:, :, :, np.newaxis] *
+                                variation[:, :, np.newaxis, :], axis=0) / N_k[:, np.newaxis, np.newaxis]
+
+        variation_from_prior = estimated_mu - self.prior_loc_mu
+        self.post_dirichlet = self.prior_dirichlet + N_k
+        self.post_beta = self.prior_beta + N_k
+        self.post_loc_mu = (self.prior_beta * self.prior_loc_mu + N_k[:, np.newaxis] * estimated_mu) / self.post_beta[:, np.newaxis]
+
+        self.post_cov_mu = np.linalg.inv(self.prior_cov_mu) + estimated_cov * N_k[:, np.newaxis, np.newaxis] \
+                           + (self.prior_beta * N_k / (self.prior_beta + N_k))[:, np.newaxis, np.newaxis] \
+                           * variation_from_prior[:, np.newaxis, :] * variation_from_prior[:, :, np.newaxis]
+
+        self.post_cov_mu = np.linalg.inv(self.post_cov_mu)
+        self.post_cov_shape = self.prior_cov_shape + N_k
+
+    def fit(self, data, max_iteration=10):
+        rho = np.eye(self.cluster_num)[KMeans(self.cluster_num).fit_predict(data)]
+        for i in range(max_iteration):
+
+            self._maximize(data, rho)
+            rho = self.predict(data)
+
+    def predict(self, data):
+        E_ln_pi = np.array([digamma(a_k) for a_k in self.post_dirichlet]) - digamma(self.post_dirichlet.sum())
+        E_ln_det_covar = np.array([np.sum([digamma(self.post_cov_shape[k]+1-i) for i in range(data.shape[1])])
+                                   + data.shape[1] * np.log(2)
+                                   + np.linalg.slogdet(self.post_cov_mu[k])[1]
+                                   for k in range(self.cluster_num)]).transpose()
+
+        deviation = data[:, np.newaxis, :] - self.post_loc_mu[np.newaxis, :, :]
+
+        E_mahalanobis = ((deviation[:, :, :, np.newaxis] * self.post_cov_mu[np.newaxis]).sum(axis=-2) * deviation).sum(axis=-1) \
+                        * self.post_cov_shape[np.newaxis, :]
+
+        rho = np.exp(E_ln_pi[np.newaxis, :] + E_ln_det_covar / 2 - data.shape[1] * np.log(2) / 2 - E_mahalanobis / 2)
+        rho = rho / np.sum(rho, axis=1)[:, np.newaxis]
+        return rho
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

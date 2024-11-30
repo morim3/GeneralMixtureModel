@@ -1,2 +1,2 @@
-from model import GeneralizedMixtureModel
+from model import GeneralizedMixtureModel, VariationalGaussianMixture
 from moduled_dist import ModuledDistribution
